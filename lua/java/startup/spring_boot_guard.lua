@@ -1,90 +1,101 @@
-local event = require('java-core.utils.event')
+local log = require('java-core.utils.log2')
 
 local M = {}
 
 local pending_commands = {}
-local jdtls_ready = false
+local spring_boot_ready = false
 
 local function flush_pending()
-	if not jdtls_ready then
+	if not spring_boot_ready then
 		return
 	end
 
-	for _, cmd in ipairs(pending_commands) do
-		cmd.fn()
-	end
+	local queued_commands = pending_commands
 	pending_commands = {}
+
+	for _, cmd in ipairs(queued_commands) do
+		local ok, err = pcall(cmd.fn)
+		if not ok then
+			log.error('Failed to flush spring boot command', err)
+		end
+	end
 end
 
 function M.install()
-	local ok, sb_jdtls = pcall(require, 'spring_boot.jdtls')
+	local ok, util = pcall(require, 'spring_boot.util')
 	if not ok then
 		return
 	end
 
-	if sb_jdtls.__guard_installed then
+	if util.__guard_installed then
 		return
 	end
-	sb_jdtls.__guard_installed = true
+	util.__guard_installed = true
 
-	local orig_execute_command = sb_jdtls.execute_command
+	util.get_client = function(name) -- luacheck: ignore
+		local clients = vim.lsp.get_clients({ name = name })
+		if clients and #clients > 0 then
+			return clients[1]
+		end
+		return nil
+	end
 
-	sb_jdtls.execute_command = function(command, param) -- luacheck: ignore
-		if jdtls_ready then
-			return orig_execute_command(command, param)
+	util.get_spring_boot_client = function()
+		local clients = vim.lsp.get_clients({ name = 'spring-boot' })
+		if clients and #clients > 0 then
+			return clients[1]
+		end
+		return nil
+	end
+
+	util.boot_execute_command = function(command, param, callback) -- luacheck: ignore
+		if spring_boot_ready then
+			local client = util.get_spring_boot_client()
+			if client then
+				local err, resp = util.execute_command(client, command, param, callback)
+				if err then
+					log.error('Error executeCommand: ' .. command, err)
+				end
+				return resp
+			end
+			spring_boot_ready = false
 		end
 
-		local client = sb_jdtls.get_jdtls_client()
+		local client = util.get_spring_boot_client()
 		if client then
-			jdtls_ready = true
+			spring_boot_ready = true
 			flush_pending()
-			return orig_execute_command(command, param)
+			local err, resp = util.execute_command(client, command, param, callback)
+			if err then
+				log.error('Error executeCommand: ' .. command, err)
+			end
+			return resp
 		end
 
 		table.insert(pending_commands, {
 			fn = function()
-				orig_execute_command(command, param)
+				local replay_client = util.get_spring_boot_client()
+				if not replay_client then
+					error('spring-boot client missing during queued command replay')
+				end
+				local err = util.execute_command(replay_client, command, param, callback)
+				if err then
+					log.error('Error executeCommand: ' .. command, err)
+				end
 			end,
 		})
+
 		return nil
 	end
 
-	local ok2, util = pcall(require, 'spring_boot.util')
-	if ok2 then
-		util.get_client = function(name) -- luacheck: ignore
-			local clients = vim.lsp.get_clients({ name = name })
-			if clients and #clients > 0 then
-				return clients[1]
-			end
-			return nil
-		end
-
-		util.get_spring_boot_client = function() -- luacheck: ignore
-			local clients = vim.lsp.get_clients({ name = 'spring-boot' })
-			if clients and #clients > 0 then
-				return clients[1]
-			end
-			return nil
-		end
-
-		util.boot_execute_command = function(command, param, callback) -- luacheck: ignore
-			local client = util.get_spring_boot_client()
-			if not client then
-				return nil
+	vim.api.nvim_create_autocmd('LspAttach', {
+		callback = function(args)
+			local client = vim.lsp.get_client_by_id(args.data.client_id)
+			if not client or client.name ~= 'spring-boot' then
+				return
 			end
 
-			local err, resp = util.execute_command(client, command, param, callback)
-			if err then
-				print('Error executeCommand: ' .. command .. '\n' .. vim.inspect(err))
-			end
-			return resp
-		end
-	end
-
-	event.on_jdtls_attach({
-		once = true,
-		callback = function()
-			jdtls_ready = true
+			spring_boot_ready = true
 			flush_pending()
 		end,
 	})
