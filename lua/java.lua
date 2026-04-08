@@ -32,7 +32,9 @@ function M.setup(custom_config)
 	local pkgm = Manager()
 	local to_install = {}
 
-	table.insert(to_install, { name = 'jdtls', version = config.jdtls.version })
+	if not config.jdtls.use_brew and not config.jdtls.install_path then
+		table.insert(to_install, { name = 'jdtls', version = config.jdtls.version })
+	end
 
 	if config.java_test.enable then
 		----------------------------------------------------------------------

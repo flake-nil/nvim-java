@@ -10,6 +10,87 @@ local str = require('java-core.utils.str')
 
 local M = {}
 
+---@private
+---@param jdtls_root string
+function M.validate_jdtls_root(jdtls_root)
+	if jdtls_root == '' or vim.fn.isdirectory(jdtls_root) == 0 then
+		err.throw('JDTLS installation not found: ' .. jdtls_root)
+	end
+
+	local plugins_dir = path.join(jdtls_root, 'plugins')
+	if vim.fn.isdirectory(plugins_dir) == 0 then
+		err.throw('Invalid JDTLS installation, missing directory: ' .. plugins_dir)
+	end
+end
+
+---@private
+---@return string
+function M.get_brew_jdtls_root()
+	local candidates = {
+		'/opt/homebrew/opt/jdtls/libexec',
+		'/usr/local/opt/jdtls/libexec',
+	}
+
+	if vim.fn.executable('brew') == 1 then
+		local brew_prefix = vim.trim(vim.fn.system('brew --prefix jdtls'))
+		if vim.v.shell_error == 0 and brew_prefix ~= '' then
+			table.insert(candidates, 1, path.join(brew_prefix, 'libexec'))
+		end
+	end
+
+	for _, candidate in ipairs(candidates) do
+		if vim.fn.isdirectory(candidate) == 1 then
+			return candidate
+		end
+	end
+
+	err.throw('Homebrew JDTLS not found. Install it with: brew install jdtls')
+	return ''
+end
+
+---@private
+---@param jdtls_root string
+---@return string
+function M.get_jdtls_version(jdtls_root)
+	local launcher_reg = path.join(jdtls_root, 'plugins', 'org.eclipse.equinox.launcher_*.jar')
+	local launchers = vim.fn.glob(launcher_reg, false, true)
+
+	if #launchers == 0 then
+		err.throw('JDTLS equinox launcher not found. Expected path: ' .. launcher_reg)
+	end
+
+	local launcher = vim.fn.fnamemodify(launchers[1], ':t')
+	local version = launcher:match('org%.eclipse%.equinox%.launcher_(%d+%.%d+%.%d+)')
+
+	if not version then
+		err.throw('Could not derive JDTLS version from launcher: ' .. launcher)
+	end
+
+	return version
+end
+
+---@private
+---@param config java.Config
+---@return string
+function M.get_jdtls_root(config)
+	local install_path = config.jdtls.install_path
+
+	if install_path and install_path ~= '' then
+		M.validate_jdtls_root(install_path)
+		config.jdtls.version = M.get_jdtls_version(install_path)
+		return install_path
+	end
+
+	if config.jdtls.use_brew then
+		local jdtls_root = M.get_brew_jdtls_root()
+		M.validate_jdtls_root(jdtls_root)
+		config.jdtls.version = M.get_jdtls_version(jdtls_root)
+		return jdtls_root
+	end
+
+	return Manager:get_install_dir('jdtls', config.jdtls.version)
+end
+
 --- Returns a function that returns the command to start jdtls
 ---@param config java.Config
 function M.get_cmd(config)
@@ -44,7 +125,7 @@ end
 ---@return java-core.List
 function M.get_jvm_args(config)
 	local use_lombok = config.lombok.enable
-	local jdtls_root = Manager:get_install_dir('jdtls', config.jdtls.version)
+	local jdtls_root = M.get_jdtls_root(config)
 	local jdtls_config = path.join(jdtls_root, system.get_config_suffix())
 
 	local java_exe = 'java'
@@ -98,7 +179,7 @@ end
 ---@param cwd? string
 ---@return java-core.List
 function M.get_jar_args(config, cwd)
-	local jdtls_root = Manager:get_install_dir('jdtls', config.jdtls.version)
+	local jdtls_root = M.get_jdtls_root(config)
 	cwd = cwd or vim.fn.getcwd()
 
 	local launcher_reg = path.join(jdtls_root, 'plugins', 'org.eclipse.equinox.launcher_*.jar')
@@ -130,6 +211,11 @@ function M.validate_java_version(config, env)
 	local exp_ver = java_version_map[config.jdtls.version]
 
 	if not exp_ver then
+		if config.jdtls.use_brew or config.jdtls.install_path then
+			log.warn('Java version check skipped for unsupported JDTLS version:', config.jdtls.version)
+			return
+		end
+
 		err.throw(
 			str.multiline(
 				'We maintain a jdlts to java version map to provide a better error message.',
