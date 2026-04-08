@@ -18,6 +18,10 @@ function RunLogger:create(buffer)
 	vim.wo[self.window].relativenumber = false
 	vim.wo[self.window].signcolumn = 'no'
 
+	vim.keymap.set('n', 'q', function()
+		self:close()
+	end, { buffer = buffer, silent = true })
+
 	self:scroll_to_bottom()
 end
 
