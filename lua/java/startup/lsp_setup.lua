@@ -29,6 +29,8 @@ function M.setup(config)
 		})
 
 		require('spring_boot').init_lsp_commands()
+
+		require('java.startup.spring_boot_guard').install()
 	end
 
 	local default_config = server.get_config({
