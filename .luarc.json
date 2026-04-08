@@ -1,4 +1,7 @@
 {
-  "diagnostics.globals": ["describe"]
+  "diagnostics.globals": ["describe"],
+    "diagnostics.disable": [
+        "duplicate-set-field"
+    ]
 }
 
