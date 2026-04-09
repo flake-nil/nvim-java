@@ -92,6 +92,15 @@ function M.setup(custom_config)
 			require('java.startup.decompile-watcher').setup()
 			require('java-refactor').setup()
 			vim.lsp.enable('jdtls')
+
+			for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+				if vim.bo[buf].filetype == 'java' and vim.api.nvim_buf_is_loaded(buf) then
+					vim.api.nvim_exec_autocmds('FileType', {
+						buffer = buf,
+						modeline = false,
+					})
+				end
+			end
 		end)
 	)
 end
