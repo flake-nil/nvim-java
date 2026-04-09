@@ -212,7 +212,7 @@ function M.validate_java_version(config, env)
 
 	if not exp_ver then
 		if config.jdtls.use_brew or config.jdtls.install_path then
-			log.warn('Java version check skipped for unsupported JDTLS version:', config.jdtls.version)
+			log.debug('Java version check skipped for custom JDTLS version:', config.jdtls.version)
 			return
 		end
 
